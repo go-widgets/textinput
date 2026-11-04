@@ -243,17 +243,26 @@ func TestReconcileLinear(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
 	}
-	best := func(n int) time.Duration {
-		prev, next := bigPair(n)
-		d := time.Duration(1 << 62)
-		for i := 0; i < 7; i++ {
-			t0 := time.Now()
+	// Each sample is a batch of calls long enough for a coarse clock (Windows
+	// reads 0 for a call of a few hundred microseconds).
+	sp, sn := bigPair(256 << 10)
+	lp, ln := bigPair(1 << 20)
+	batch := func(prev, next State, reps int) time.Duration {
+		t0 := time.Now()
+		for i := 0; i < reps; i++ {
 			Reconcile(prev, next)
-			d = min(d, time.Since(t0))
 		}
-		return d
+		return time.Since(t0)
 	}
-	small, large := best(256<<10), best(1<<20)
+	reps := 1
+	for batch(sp, sn, reps) < 30*time.Millisecond {
+		reps *= 2
+	}
+	small, large := time.Duration(1<<62), time.Duration(1<<62)
+	for i := 0; i < 5; i++ {
+		small = min(small, batch(sp, sn, reps))
+		large = min(large, batch(lp, ln, reps))
+	}
 	ratio := float64(large) / float64(small)
 	t.Logf("256 KiB: %v, 1 MiB: %v, ratio %.1f (linear = 4, quadratic = 16)", small, large, ratio)
 	if ratio > 10 {
