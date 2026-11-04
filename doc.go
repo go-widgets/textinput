@@ -33,6 +33,6 @@
 //
 // # Cost
 //
-// Every function is linear in the length of its text arguments and never
-// allocates more than a few bytes per input byte.
+// Every function is linear in the length of its text arguments, and none of
+// them allocates: results are numbers or slices of the arguments.
 package textinput

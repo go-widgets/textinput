@@ -2,7 +2,6 @@ package textinput
 
 import (
 	"strings"
-	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -20,6 +19,11 @@ func width(r rune) int {
 func Len(s string) int {
 	n := 0
 	for i := 0; i < len(s); {
+		if s[i] < utf8.RuneSelf {
+			n++
+			i++
+			continue
+		}
 		r, size := utf8.DecodeRuneInString(s[i:])
 		n += width(r)
 		i += size
@@ -31,20 +35,37 @@ func Len(s string) int {
 // clamped to [0, Len(s)], and an offset inside a surrogate pair rounds down
 // to the start of the rune.
 func ToByte(s string, off int) int {
+	b, _ := locate(s, off)
+	return b
+}
+
+// locate is ToByte that also reports whether off falls inside a surrogate
+// pair, in which case the byte offset is that of the pair's start.
+func locate(s string, off int) (b int, mid bool) {
 	u := 0
 	for i := 0; i < len(s); {
 		if u >= off {
-			return i
+			return i, false
 		}
 		r, size := utf8.DecodeRuneInString(s[i:])
 		w := width(r)
 		if u+w > off {
-			return i
+			return i, true
 		}
 		u += w
 		i += size
 	}
-	return len(s)
+	return len(s), false
+}
+
+// chunk returns the byte length of the rune, or of the one invalid byte,
+// that starts s[i:]. It is the step by which every function here walks.
+func chunk(s string, i int) int {
+	if s[i] < utf8.RuneSelf {
+		return 1
+	}
+	_, size := utf8.DecodeRuneInString(s[i:])
+	return size
 }
 
 // FromByte converts the byte offset b in s into a UTF-16 offset. b is
@@ -110,33 +131,6 @@ func FromRune(s string, r int) int {
 	for i := 0; i < len(s) && r > 0; r-- {
 		c, size := utf8.DecodeRuneInString(s[i:])
 		u += width(c)
-		i += size
-	}
-	return u
-}
-
-// invalidBase is added to an invalid byte to make its symbol in [units].
-const invalidBase = 0x10000
-
-// units returns one symbol per UTF-16 unit of s, counting like [Len]. A BMP
-// rune is its own symbol and an astral rune gives its two surrogates, so a
-// high surrogate is always followed by its low one. An invalid byte is
-// invalidBase plus the byte, which no valid rune or surrogate can equal:
-// two texts are equal exactly when their symbols are, even when invalid
-// bytes and a real U+FFFD would both count as the unit 0xFFFD.
-func units(s string) []uint32 {
-	u := make([]uint32, 0, len(s))
-	for i := 0; i < len(s); {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		switch {
-		case r == utf8.RuneError && size == 1:
-			u = append(u, invalidBase+uint32(s[i]))
-		case r >= 0x10000:
-			hi, lo := utf16.EncodeRune(r)
-			u = append(u, uint32(hi), uint32(lo))
-		default:
-			u = append(u, uint32(r))
-		}
 		i += size
 	}
 	return u

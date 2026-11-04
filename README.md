@@ -89,12 +89,15 @@ e.Apply(prev.Text) == next.Text       // true
   every selection shape: the edit applied to the old state gives the new state,
   stays in range, and never splits a pair.
 - An optimality test against brute force on a two-letter alphabet.
+- A reference implementation (`oracle_test.go`: both texts converted to one
+  symbol per UTF-16 unit, then diffed) that every checked pair must agree
+  with, including pieces such as the half of a euro sign and of an emoji.
 - Two fuzz targets, `FuzzReconcile` and `FuzzUTF16`, seeded with lone
   surrogates, invalid UTF-8, emoji ZWJ sequences, combining marks and CRLF
   (`fuzz_test.go`). CI runs each for 60 s.
 - Linear cost: `TestReconcileLinear` checks that 4x the text (256 KiB to
-  1 MiB) takes well under 16x the time, and `TestReconcileAllocs` that the
-  allocation count does not depend on the size.
+  1 MiB) takes well under 16x the time, and `TestReconcileAllocs` that
+  `Reconcile` allocates nothing.
 - CI runs on linux/amd64, linux/386 (32-bit offsets), darwin, windows and
   js/wasm under node, plus `govulncheck`.
 
@@ -106,21 +109,27 @@ CRLF line ends:
 
 | Case | Time | Throughput | Allocated |
 | --- | ---: | ---: | ---: |
-| mid-insert, 1 KiB | 4.2 us | 241 MB/s | 8.8 KiB, 2 allocs |
-| mid-insert, 64 KiB | 0.26 ms | 253 MB/s | 520 KiB, 2 allocs |
-| mid-insert, 1 MiB | 4.0 ms | 262 MB/s | 8.0 MiB, 2 allocs |
-| disjoint texts, 1 MiB | 3.4 ms | 305 MB/s | 8.0 MiB, 2 allocs |
-| last byte differs, 1 MiB | 4.2 ms | 248 MB/s | 8.0 MiB, 2 allocs |
-| equal texts, 1 MiB | 3.5 ns | | 0 allocs |
+| mid-insert, 1 KiB | 0.86 us | 1.2 GB/s | 0 allocs |
+| mid-insert, 64 KiB | 50 us | 1.3 GB/s | 0 allocs |
+| mid-insert, 1 MiB | 0.81 ms | 1.3 GB/s | 0 allocs |
+| disjoint texts, 1 MiB | 2.9 ms | 364 MB/s | 0 allocs |
+| last byte differs, 1 MiB | 0.55 ms | 1.9 GB/s | 0 allocs |
+| equal texts, 1 MiB | 3.7 ns | | 0 allocs |
 
-Median of 3 runs of 300 iterations, 1-minute load 4. Time per byte is flat
-from 1 KiB to 1 MiB: the cost is linear. There is no reference
-implementation to compare with: VS Code's and Flutter's diffs are
-JavaScript/Dart on UTF-16 strings, which Go cannot be timed against on equal
-terms. The allocation (4 bytes per UTF-16 unit and per text) is the obvious
-cost to remove, with a byte-level path for valid UTF-8, if a host ever
-reconciles megabyte documents; hosts mirror a window of a few hundred
-characters.
+Median of 3 runs of 300 iterations. The 1-minute load was 11 to 25 (above the
+8 the fleet rule allows), but a first pass at load 4 gave the same figures
+within 5%; re-run on a quiet machine before quoting them elsewhere. Time per
+byte is flat from 1 KiB to 1 MiB: the cost is linear, and the old
+implementation, which converted both texts to UTF-16 symbols, took 4.0 ms and
+8 MiB for the 1 MiB mid-insert. There is no reference implementation to
+compare with: VS Code's and Flutter's diffs are JavaScript/Dart on UTF-16
+strings, which Go cannot be timed against on equal terms.
+
+The editor text layer holds a whole document, so `Reconcile` runs over all of
+it on each keystroke: it works on the UTF-8 bytes, allocates nothing, and
+only counts the runes before the edit and inside the common suffix.
+`TestReconcileAllocs` asserts 0 allocations on 1 MiB mixed, CJK/emoji,
+overlapping and disjoint inputs.
 
 ## Licence
 

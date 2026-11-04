@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // check asserts the contract of Reconcile for one pair: the Edit applied to
@@ -23,6 +24,9 @@ func check(t testing.TB, prev, next State) Edit {
 		if FromByte(prev.Text, ToByte(prev.Text, off)) != off {
 			t.Fatalf("Reconcile(%q, %q) = %+v: offset %d splits a pair", prev.Text, next.Text, e, off)
 		}
+	}
+	if want := reconcileRef(prev, next); e != want {
+		t.Fatalf("Reconcile(%q, %q) = %+v; the reference gives %+v", prev.Text, next.Text, e, want)
 	}
 	if (prev.Text == next.Text) != e.IsZero() {
 		t.Fatalf("Reconcile(%q, %q) = %+v: zero only for equal texts", prev.Text, next.Text, e)
@@ -74,6 +78,8 @@ func TestReconcileCases(t *testing.T) {
 		{"delete emoji", caret("a🙂b", 3), caret("ab", 1), Edit{1, 3, ""}},
 		{"swap emoji, shared high surrogate", caret("🙂", 2), caret("🙃", 2), Edit{0, 2, "🙃"}},
 		{"swap emoji, shared low surrogate", caret("\U0001F642", 2), caret("\U0001F742", 2), Edit{0, 2, "\U0001F742"}},
+		{"insert emoji sharing a high surrogate", caret("🙂", 0), caret("🙔🙂", 2), Edit{0, 0, "🙔"}},
+		{"insert emoji sharing a low surrogate", caret("\U0001F642", 0), caret("\U0001F742\U0001F642", 2), Edit{0, 0, "\U0001F742"}},
 		{"emoji in a run", caret("🙂🙂", 4), caret("🙂", 2), Edit{2, 4, ""}},
 		{"zwj sequence loses a member", caret("👨‍👩‍👧", 8), caret("👨‍👩", 5), Edit{5, 8, ""}},
 		// Combining marks are separate runes, so they diff on their own.
@@ -86,6 +92,12 @@ func TestReconcileCases(t *testing.T) {
 		// Invalid UTF-8 is kept byte for byte.
 		{"invalid byte typed", caret("ab", 1), caret("a\xffb", 2), Edit{1, 1, "\xff"}},
 		{"invalid vs replacement char", caret("a\xff", 2), caret("a�", 2), Edit{1, 2, "�"}},
+		// Symbols are cut forward: the same bytes can be one rune in one text
+		// and two invalid bytes in the other, so a byte-equal suffix is not
+		// always a suffix of symbols.
+		{"euro vs its invalid tail", caret("\xe2\x82\xac", 3), caret("\x82\xac", 2), Edit{0, 1, "\x82\xac"}},
+		{"invalid tail vs euro", caret("\x82\xac", 2), caret("\xe2\x82\xac", 3), Edit{0, 2, "€"}},
+		{"euro vs truncated", caret("x\xe2\x82\xac", 4), caret("x\xe2\x82A", 4), Edit{1, 2, "\xe2\x82A"}},
 		{"selection beyond the text", sel("ab", 9, 9), caret("abc", 3), Edit{2, 2, "c"}},
 	}
 	for _, c := range cases {
@@ -110,10 +122,19 @@ func TestReconcileIgnoresMarks(t *testing.T) {
 // Every pair of short texts built from awkward pieces, with every selection
 // shape: the property holds for all of them.
 func TestReconcileExhaustive(t *testing.T) {
-	pieces := []string{"a", "b", "🙂", "\xff", "é", "\n"}
+	exhaustive(t, []string{"a", "b", "🙂", "\xff", "é", "\n"}, 3)
+}
+
+// The same with the pieces that make byte-equal suffixes cut differently:
+// the parts of a euro sign and of an emoji, alone and whole.
+func TestReconcileExhaustiveBrokenSequences(t *testing.T) {
+	exhaustive(t, []string{"a", "\xe2", "\x82", "\xac", "€", "\xf0\x9f", "\x99\x82", "🙂"}, 3)
+}
+
+func exhaustive(t *testing.T, pieces []string, depth int) {
 	all := []string{""}
 	level := []string{""}
-	for d := 0; d < 3; d++ {
+	for d := 0; d < depth; d++ {
 		var nxt []string
 		for _, s := range level {
 			for _, p := range pieces {
@@ -240,15 +261,41 @@ func TestReconcileLinear(t *testing.T) {
 	}
 }
 
-// The memory used is also linear: a fixed number of allocations whatever the
-// size, each proportional to it.
+// cjk returns a text of about n bytes of CJK, emoji and ASCII: every rune
+// outside ASCII is 3 or 4 bytes, and the emoji take two UTF-16 units.
+func cjk(n int) string {
+	const unit = "日本語のテキスト、🙂🚀 とASCII。\n"
+	return strings.Repeat(unit, n/len(unit))
+}
+
+// Reconcile allocates nothing: the Edit it returns slices next.Text.
 func TestReconcileAllocs(t *testing.T) {
-	for _, n := range []int{1 << 10, 1 << 20} {
-		prev, next := bigPair(n)
-		allocs := testing.AllocsPerRun(5, func() { Reconcile(prev, next) })
-		if allocs > 2 {
-			t.Errorf("%d bytes: %v allocations, want at most 2", n, allocs)
+	mixed, mixedNext := bigPair(1 << 20)
+	base := cjk(1 << 20)
+	mid := ToByte(base, Len(base)/2)
+	_, size := utf8.DecodeRuneInString(base[mid:])
+	cjkPrev := caret(base, Len(base)/2)
+	cjkNext := caret(base[:mid]+"漢字🙂"+base[mid:], Len(base)/2+4)
+	cjkDel := caret(base[:mid]+base[mid+size:], Len(base)/2)
+	cases := []struct {
+		name       string
+		prev, next State
+	}{
+		{"1 MiB mixed insert", mixed, mixedNext},
+		{"1 MiB mixed delete", mixedNext, mixed},
+		{"1 MiB CJK/emoji insert", cjkPrev, cjkNext},
+		{"1 MiB CJK/emoji delete", cjkPrev, cjkDel},
+		{"1 MiB CJK/emoji equal", cjkPrev, cjkPrev},
+		{"1 KiB insert", caret("abc", 1), caret("aXbc", 2)},
+		{"overlapping trims", caret(strings.Repeat("a", 1<<20), 0), caret(strings.Repeat("a", 1<<20-1), 0)},
+		{"disjoint 1 MiB", caret(strings.Repeat("a", 1<<20), 0), caret(strings.Repeat("🙂", 1<<18), 0)},
+	}
+	for _, c := range cases {
+		allocs := testing.AllocsPerRun(5, func() { Reconcile(c.prev, c.next) })
+		if allocs != 0 {
+			t.Errorf("%s: %v allocations, want 0", c.name, allocs)
 		}
+		check(t, c.prev, c.next)
 	}
 }
 
