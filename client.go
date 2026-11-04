@@ -30,8 +30,9 @@ type Client interface {
 	// SetInputSelection moves the selection.
 	SetInputSelection(anchor, focus int)
 	// ReplaceInput replaces [start, end) with text, as a committed, undoable
-	// edit. (-1, -1) means the current selection.
-	// [insertText:replacementRange:]
+	// edit, and ends any composition. (-1, -1) means the current marked
+	// range, or the selection when there is none: committing a composition
+	// replaces its preview. [insertText:replacementRange:]
 	ReplaceInput(start, end int, text string)
 	// SetMarkedInput replaces [replStart, replEnd) with text and marks it as
 	// the composition preview; (-1, -1) means the current marked range, or
