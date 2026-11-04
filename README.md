@@ -106,17 +106,15 @@ CRLF line ends:
 
 | Case | Time | Throughput | Allocated |
 | --- | ---: | ---: | ---: |
-| mid-insert, 1 KiB | 4.5 us | 225 MB/s | 8.8 KiB, 2 allocs |
+| mid-insert, 1 KiB | 4.2 us | 241 MB/s | 8.8 KiB, 2 allocs |
 | mid-insert, 64 KiB | 0.26 ms | 253 MB/s | 520 KiB, 2 allocs |
-| mid-insert, 1 MiB | 3.9 ms | 272 MB/s | 8.0 MiB, 2 allocs |
-| disjoint texts, 1 MiB | 3.3 ms | 317 MB/s | 8.0 MiB, 2 allocs |
-| last byte differs, 1 MiB | 4.1 ms | 254 MB/s | 8.0 MiB, 2 allocs |
+| mid-insert, 1 MiB | 4.0 ms | 262 MB/s | 8.0 MiB, 2 allocs |
+| disjoint texts, 1 MiB | 3.4 ms | 305 MB/s | 8.0 MiB, 2 allocs |
+| last byte differs, 1 MiB | 4.2 ms | 248 MB/s | 8.0 MiB, 2 allocs |
 | equal texts, 1 MiB | 3.5 ns | | 0 allocs |
 
-Time per byte is flat from 1 KiB to 1 MiB: the cost is linear. These timings
-were taken at a 1-minute load of 26, above the 8 at which the fleet rule
-allows measuring, so treat the times as an upper bound and re-run them on a
-quiet machine; the allocation counts are exact. There is no reference
+Median of 3 runs of 300 iterations, 1-minute load 4. Time per byte is flat
+from 1 KiB to 1 MiB: the cost is linear. There is no reference
 implementation to compare with: VS Code's and Flutter's diffs are
 JavaScript/Dart on UTF-16 strings, which Go cannot be timed against on equal
 terms. The allocation (4 bytes per UTF-16 unit and per text) is the obvious
